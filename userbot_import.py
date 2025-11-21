@@ -6,6 +6,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from database.models import User, Base, PollChat, PollResult
 import traceback
+from telethon.errors import RPCError
 from config import API_ID, API_HASH, NAME
 # ================== CONFIG ==================
 
@@ -80,7 +81,7 @@ async def sync_handler(event):
 # ==========================================================
 @client.on(events.NewMessage)
 async def detect_polls(event):
-    """Фіксує нові опитування."""
+    """Фіксує нові опитування та голосує автоматично."""
     if not event.media or not isinstance(event.media, MessageMediaPoll):
         return
 
@@ -88,7 +89,7 @@ async def detect_polls(event):
     chat = await event.get_chat()
     session = Session()
 
-    # 🆕 нормалізуємо chat_id
+    # нормалізуємо chat_id
     chat_id = normalize_chat_id(event.chat_id)
 
     # Перевіряємо, чи опитування вже збережено
@@ -101,7 +102,7 @@ async def detect_polls(event):
 
     session.add(PollChat(
         poll_id=str(poll.id),
-        chat_id=chat_id,  # 👈 вже нормалізоване значення
+        chat_id=chat_id,
         chat_title=getattr(chat, "title", None),
         question=question_text,
         author_id=event.sender_id,
@@ -111,7 +112,28 @@ async def detect_polls(event):
     session.commit()
     session.close()
 
-    #print(f"🗳️ Збережено опитування в чаті {chat_id}: {question_text}")
+    # --- Автоматичне голосування ---
+    try:
+        # ВАРІАНТ 1 — проголосувати за перший варіант:
+        await event.message.click(0)
+        print(f"✅ Проголосовано за перший варіант опитування в чаті {chat_id}: {question_text}")
+
+        # --- АБО: випадковий варіант (щоб виглядало "живіше")
+        # index = random.randrange(len(poll.options))
+        # await event.message.click(index)
+        # print(f"✅ Проголосовано за варіант {index} (випадковий) у чаті {chat_id}: {question_text}")
+
+    except RPCError as e:
+        # Помилки RPC — покажемо їх
+        print(f"❌ Не вдалося проголосувати (RPCError): {e}")
+
+        # Якщо ваша версія Telethon старіша і не підтримує click() для опитувань,
+        # запропонуємо оновити Telethon (але не намагаємось вгадувати байти опцій тут).
+        print("ℹ️ Якщо проблема через версію Telethon, спробуйте оновити бібліотеку: pip install -U telethon")
+
+    except Exception as e:
+        # Загальна обробка помилок
+        print(f"❌ Не вдалося проголосувати: {e}")
 
 
 # ==========================================================
