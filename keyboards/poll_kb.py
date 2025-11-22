@@ -18,10 +18,17 @@ def chats_list_kb(chats):
     """Список чатів."""
     return InlineKeyboardMarkup(
         inline_keyboard=[
-            [InlineKeyboardButton(
-                text=f"{c[1] or 'Без назви'}",
-                callback_data=f"chat_toggle_{c[0]}"
-            )] for c in chats
+            [
+                InlineKeyboardButton(
+                    text=f"{c[1] or 'Без назви'}",
+                    callback_data=f"chat_toggle_{c[0]}"
+                ),
+                InlineKeyboardButton(
+                    text="🗑",
+                    callback_data=f"chat_delete_{c[0]}"
+                ),
+            ]
+            for c in chats
         ] + [[InlineKeyboardButton(text="🔙 Назад", callback_data="admin_back")]]
     )
 

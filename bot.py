@@ -20,6 +20,7 @@ import re
 from aiogram.filters import ChatMemberUpdatedFilter, KICKED, LEFT
 from aiogram.filters.chat_member_updated import ChatMemberUpdatedFilter
 from aiogram.enums.chat_member_status import ChatMemberStatus
+from sqlalchemy.orm import Session as SessionType
 # ===================== DATABASE =====================
 engine = create_engine("sqlite:///members.db", echo=False)
 Session = sessionmaker(bind=engine)
@@ -392,6 +393,50 @@ async def toggle_chat_status(callback: types.CallbackQuery):
 
     # 🔄 Оновлюємо список чатів
     await show_chats_menu(callback)
+
+
+@dp.callback_query(F.data.startswith("chat_delete_"))
+@admin_only
+async def delete_chat_handler(callback: types.CallbackQuery):
+    chat_id_str = callback.data.replace("chat_delete_", "", 1)
+
+    try:
+        chat_id = int(chat_id_str)
+    except ValueError:
+        await callback.answer("❌ Некоректний ID чату.", show_alert=True)
+        return
+
+    session = Session()
+    try:
+        delete_chat_with_related(session, chat_id)
+        session.commit()
+    except Exception as e:
+        session.rollback()
+        # можна залогувати e
+        await callback.answer("⚠️ Сталася помилка під час видалення.", show_alert=True)
+        session.close()
+        return
+    finally:
+        session.close()
+
+    await callback.answer("✅ Чат та всі пов'язані дані видалено")
+
+    # Оновлюємо список чатів
+    session = Session()
+    chats = (
+        session.query(PollChat.chat_id, PollChat.chat_title)
+        .distinct()
+        .all()
+    )
+    session.close()
+
+    if chats:
+        await callback.message.edit_text(
+            "💬 Список усіх чатів:",
+            reply_markup=chats_list_kb(chats)
+        )
+    else:
+        await callback.message.edit_text("❌ У базі більше немає жодного чату.")
 
 
 @dp.callback_query(F.data == "admins_menu")
@@ -783,10 +828,6 @@ async def reactions_menu(message: types.Message, state: FSMContext):
     await message.answer("📎 Надішліть посилання на повідомлення, щоб перевірити реакції:")
 
 
-
-
-
-
 # ===================== АНАЛІТИКА '+' =====================
 active_plus_sessions = {}
 
@@ -1167,6 +1208,21 @@ async def finish_plus_tracking(chat_id: int, minutes: int):
     tracking["active"] = False
     await send_plus_summary(chat_id, tracking, minutes)
 
+
+def delete_chat_with_related(session: SessionType, chat_id: int):
+    """Видаляє все, що прив'язане до конкретного chat_id."""
+
+    # Спочатку видаляємо все, що посилається на users (FK user_id),
+    # але фільтрується по chat_id
+    session.query(PollResult).filter(PollResult.chat_id == chat_id).delete(synchronize_session=False)
+    session.query(PostReaction).filter(PostReaction.chat_id == chat_id).delete(synchronize_session=False)
+    session.query(ChatMember).filter(ChatMember.chat_id == chat_id).delete(synchronize_session=False)
+
+    # Потім видаляємо користувачів, які були тільки в цьому чаті
+    session.query(User).filter(User.chat_id == chat_id).delete(synchronize_session=False)
+
+    # І наостанок сам чат / опитування в цьому чаті
+    session.query(PollChat).filter(PollChat.chat_id == chat_id).delete(synchronize_session=False)
 
 @dp.chat_member(ChatMemberUpdatedFilter(member_status_changed=(ChatMemberStatus.LEFT, ChatMemberStatus.KICKED)))
 async def on_user_left(event: ChatMemberUpdated):
